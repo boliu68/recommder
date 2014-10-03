@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 import math
-from evaluation import *
-import numexpr as ne
+import evaluation as eva 
+from multiprocessing import Pool
+reload(eva)
 
 def assign_id(data):
     
@@ -36,8 +37,7 @@ def user_bias(data, itemid, vkid):
     item_count = np.zeros(len(itemid))
 
     #update the bias for user and item
-    for idx, value in data[['vk','itemid','action']].iterrows():
-	
+    for idx, value in data[['vk','itemid','action']].iterrows(): 
 	vk_avg[vkid[value['vk']]] = vk_avg[vkid[value['vk']]] + value['action']
 	vk_count[vkid[value['vk']]] = vk_count[vkid[value['vk']]] + 1
 
@@ -60,11 +60,7 @@ def sgd(data, avg, vk_avg, item_avg, u, v, itemid, vkid, gamma, lda):
 	vk_num = vkid[value['vk']]
 	item_num = itemid[value['itemid']]
 
-#	err = value['action'] - avg - vk_avg[vk_num] - item_avg[item_num] - np.dot(u[vk_num, :], v[item_num, :]) 
 	err = value['action'] - np.dot(u[vk_num, :], v[item_num, :]) 
-
-#	if np.isnan(np.dot(u[vk_num,:], v[item_num,:])):
-#	    exit()
 
 	vt = v[item_num, :]
 	ut = u[vk_num, :]
@@ -75,6 +71,39 @@ def sgd(data, avg, vk_avg, item_avg, u, v, itemid, vkid, gamma, lda):
 
     sum_err = math.sqrt(sum_err / data.shape[0])
     return u, v, sum_err 
+
+def predict(test_data, avg, vk_avg, item_avg, u, v, itemid, vkid):
+   
+    prediction = np.zeros(test_data.shape[0])
+
+    for idx, value in test_data[['vk', 'itemid', 'action']].iterrows():
+
+	if value['vk'] not in vkid.keys():
+	    continue
+	if value['itemid'] not in itemid.keys():
+	    continue
+	
+	prediction[idx] == (np.dot(u[vkid[value['vk']]], v[itemid[value['itemid']]])) 
+
+    return prediction
+
+def predict_all(test_data, u, v, itemid, vkid):
+
+    prediction_all = np.dot(u, v.T)
+    return prediction_all
+
+def avg_prediction(test_data, avg, vk_avg, item_avg,  itemid, vkid):
+
+    prediction = np.zeros((len(vkid), len(itemid)))
+    
+    for iid in itemid.keys():
+	for vid in vkid.keys():
+
+	    itemnum = itemid[iid]
+	    vknum = vkid[vid]
+	    prediction[vknum, itemnum] = avg + vk_avg[vknum] + item_avg[itemnum]
+   
+    return prediction
 
 def mf(data, split_time, k):
 
@@ -96,17 +125,26 @@ def mf(data, split_time, k):
     old_err = 1e10 
     err = 1e5 
 
-#    while(old_err - err > 0.001):
-#
-#	old_err = err
-#	u, v, err = sgd(training_data, avg, vk_avg, item_avg, u, v, tr_itemid, tr_vkid, gamma, lda)
-#	gamma = gamma * beta	
-#	print '----------Error------------'
-#	print err
-  
-    rmse, avg_rmse, new_vk, new_item = rmse_test(test_data, u, v, tr_itemid, tr_vkid, avg, item_avg, vk_avg)
+    while(old_err - err > 0.001):
 
-    print 'MF RMSE:', rmse
-    print 'AVG RMSE:', avg_rmse
-    print 'Number of New user:%d, Num of total user:%d' % (new_vk, len(tst_vkid))
-    print 'Number of New Items:%d, Num of total item:%d' % (new_item, len(tst_itemid))
+	old_err = err
+	u, v, err = sgd(training_data, avg, vk_avg, item_avg, u, v, tr_itemid, tr_vkid, gamma, lda)
+	gamma = gamma * beta	
+	print '----------Error------------'
+	print err
+
+    avg_pd = avg_prediction(test_data, avg, vk_avg, item_avg,  tr_itemid, tr_vkid)
+    prediction_all = predict_all(test_data, u, v, tr_itemid, tr_vkid)
+
+#    rmse, avg_rmse, new_vk, new_item = eva.rmse_test(test_data, u, v, tr_itemid, tr_vkid, avg, item_avg, vk_avg)
+#    print 'MF RMSE:', rmse
+#    print 'AVG RMSE:', avg_rmse
+#    print 'Number of New user:%d, Num of total user:%d' % (new_vk, len(tst_vkid))
+#    print 'Number of New Items:%d, Num of total item:%d' % (new_item, len(tst_itemid))
+
+    
+    avg_ndcg = eva.ndcg_test(test_data, avg_pd, tr_itemid, tr_vkid, 25)
+    ndcg = eva.ndcg_test(test_data, prediction_all, tr_itemid, tr_vkid, 25)
+
+    print 'MF NDCG:', ndcg
+    print 'AVG NDCG:', avg_ndcg
